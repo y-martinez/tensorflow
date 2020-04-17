@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,33 +15,24 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/event.h"
 
+#include "tensorflow/stream_executor/stream.h"
 #include "tensorflow/stream_executor/stream_executor_internal.h"
 #include "tensorflow/stream_executor/stream_executor_pimpl.h"
-#include "tensorflow/stream_executor/stream.h"
 
-namespace perftools {
-namespace gputools {
-
-internal::EventInterface* CreateEventImplementation(
-    StreamExecutor* stream_exec) {
-  PlatformKind platform_kind = stream_exec->platform_kind();
-  switch (platform_kind) {
-    case PlatformKind::kCuda:
-      return (*internal::MakeCUDAEventImplementation())(stream_exec);
-    default:
-      LOG(FATAL) << "Cannot create event implementation for platform kind: "
-                 << PlatformKindString(platform_kind);
-  }
-}
+namespace stream_executor {
 
 Event::Event(StreamExecutor* stream_exec)
-    : implementation_(CreateEventImplementation(stream_exec)),
-      stream_exec_(stream_exec) {}
+    : stream_exec_(stream_exec),
+      implementation_(
+          stream_exec_->implementation()->CreateEventImplementation()) {}
 
 Event::~Event() {
-  auto status = stream_exec_->DeallocateEvent(this);
-  if (!status.ok()) {
-    LOG(ERROR) << status.error_message();
+  // Deal with nullptr implementation_, as this event may have been std::moved.
+  if (stream_exec_ && implementation_) {
+    auto status = stream_exec_->DeallocateEvent(this);
+    if (!status.ok()) {
+      LOG(ERROR) << status.error_message();
+    }
   }
 }
 
@@ -59,5 +50,4 @@ Event::Status Event::PollForStatus() {
   return stream_exec_->PollForEventStatus(this);
 }
 
-}  // namespace gputools
-}  // namespace perftools
+}  // namespace stream_executor

@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,31 +20,12 @@ limitations under the License.
 #include "tensorflow/stream_executor/platform.h"
 #include "tensorflow/stream_executor/platform/logging.h"
 #include "tensorflow/stream_executor/stream_executor.h"
-#include "tensorflow/stream_executor/stream_executor_internal.h"
 
-namespace perftools {
-namespace gputools {
-
-static internal::TimerInterface *CreateTimerImplementation(
-    StreamExecutor *parent) {
-  PlatformKind platform_kind = parent->platform_kind();
-  if (platform_kind == PlatformKind::kCuda) {
-    return (*internal::MakeCUDATimerImplementation())(parent);
-  } else if (platform_kind == PlatformKind::kOpenCL ||
-             platform_kind == PlatformKind::kOpenCLAltera) {
-    return (*internal::MakeOpenCLTimerImplementation())(parent);
-  } else if (platform_kind == PlatformKind::kHost) {
-    return internal::MakeHostTimerImplementation(parent);
-  } else if (platform_kind == PlatformKind::kMock) {
-    return nullptr;
-  } else {
-    LOG(FATAL) << "cannot create timer implementation for platform kind: "
-               << PlatformKindString(platform_kind);
-  }
-}
+namespace stream_executor {
 
 Timer::Timer(StreamExecutor *parent)
-    : implementation_(CreateTimerImplementation(parent)), parent_(parent) {}
+    : parent_(parent),
+      implementation_(parent_->implementation()->GetTimerImplementation()) {}
 
 Timer::~Timer() { parent_->DeallocateTimer(this); }
 
@@ -52,5 +33,4 @@ uint64 Timer::Microseconds() const { return implementation_->Microseconds(); }
 
 uint64 Timer::Nanoseconds() const { return implementation_->Nanoseconds(); }
 
-}  // namespace gputools
-}  // namespace perftools
+}  // namespace stream_executor

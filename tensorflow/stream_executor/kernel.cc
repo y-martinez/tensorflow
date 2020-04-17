@@ -1,4 +1,4 @@
-/* Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,16 +19,15 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/kernel.h"
 
-#include "tensorflow/stream_executor/platform/port.h"
-
+#include "absl/strings/string_view.h"
+#include "absl/strings/strip.h"
 #include "tensorflow/stream_executor/lib/demangle.h"
 #include "tensorflow/stream_executor/platform.h"
 #include "tensorflow/stream_executor/platform/logging.h"
+#include "tensorflow/stream_executor/platform/port.h"
 #include "tensorflow/stream_executor/stream_executor.h"
-#include "tensorflow/stream_executor/stream_executor_internal.h"
 
-namespace perftools {
-namespace gputools {
+namespace stream_executor {
 
 bool KernelMetadata::registers_per_thread(int *registers_per_thread) const {
   if (has_registers_per_thread_) {
@@ -58,31 +57,28 @@ void KernelMetadata::set_shared_memory_bytes(int shared_memory_bytes) {
   has_shared_memory_bytes_ = true;
 }
 
-static internal::KernelInterface *KernelImplementationFromPlatformKind(
-    PlatformKind platform_kind) {
-  if (platform_kind == PlatformKind::kCuda) {
-    return (*internal::MakeCUDAKernelImplementation())();
-  } else if (platform_kind == PlatformKind::kOpenCL ||
-             platform_kind == PlatformKind::kOpenCLAltera) {
-    return (*internal::MakeOpenCLKernelImplementation())();
-  } else {
-    LOG(FATAL) << "cannot create kernel implementation for platform kind: "
-               << PlatformKindString(platform_kind);
-  }
+KernelBase::KernelBase(KernelBase &&from)
+    : parent_(from.parent_),
+      implementation_(std::move(from.implementation_)),
+      name_(std::move(from.name_)),
+      demangled_name_(std::move(from.demangled_name_)),
+      metadata_(from.metadata_) {
+  from.parent_ = nullptr;
 }
 
 KernelBase::KernelBase(StreamExecutor *parent)
-    : implementation_(
-          KernelImplementationFromPlatformKind(parent->platform_kind())),
-      parent_(parent) {
-  DCHECK(parent_ != nullptr);
-}
+    : parent_(parent),
+      implementation_(parent->implementation()->CreateKernelImplementation()) {}
 
 KernelBase::KernelBase(StreamExecutor *parent,
                        internal::KernelInterface *implementation)
-    : implementation_(implementation), parent_(parent) {}
+    : parent_(parent), implementation_(implementation) {}
 
-KernelBase::~KernelBase() {}
+KernelBase::~KernelBase() {
+  if (parent_) {
+    parent_->UnloadKernel(this);
+  }
+}
 
 unsigned KernelBase::Arity() const { return implementation_->Arity(); }
 
@@ -94,17 +90,12 @@ KernelCacheConfig KernelBase::GetPreferredCacheConfig() const {
   return implementation_->GetPreferredCacheConfig();
 }
 
-// Prefix stub functions emitted by the CUDA splitter.
-static const char *kStubPrefix = "__device_stub_";
+void KernelBase::set_name(absl::string_view name) {
+  name_ = std::string(name);
 
-void KernelBase::set_name(port::StringPiece name) {
-  name_ = name.ToString();
-  port::StringPiece stubless_name = name;
-  if (name.starts_with(kStubPrefix)) {
-    stubless_name.remove_prefix(strlen(kStubPrefix));
-  }
-  demangled_name_ = port::Demangle(stubless_name.data());
+  // CUDA splitter prefixes stub functions with __device_stub_.
+  demangled_name_ =
+      port::Demangle(absl::StripPrefix(name, "__device_stub_").data());
 }
 
-}  // namespace gputools
-}  // namespace perftools
+}  // namespace stream_executor
